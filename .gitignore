@@ -1,0 +1,7 @@
+.bashew*
+.template*
+.tmp
+/.claude/
+/.idea/
+/log/
+/temp/
