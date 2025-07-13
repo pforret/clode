@@ -1,7 +1,6 @@
-.bashew*
-.template*
+log
 .tmp
-/.claude/
-/.idea/
-/log/
-/temp/
+*.tmp
+.env
+.idea
+vendor
