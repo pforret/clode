@@ -197,8 +197,15 @@ function do_prep_project() {
     
     # Initialize git if not already initialized
     if [[ ! -d ".git" ]]; then
-        git init
-        IO:success "Initialized git repository"
+        # Try to initialize with main branch (newer git versions)
+        if git init --initial-branch=main 2>/dev/null; then
+            IO:success "Initialized git repository with main branch"
+        else
+            # Fallback for older git versions
+            git init
+            git branch -m main 2>/dev/null || true  # Rename master to main if it exists
+            IO:success "Initialized git repository with main branch"
+        fi
     fi
     
     IO:success "Project prepared for AI development"
@@ -298,6 +305,9 @@ function do_intermediate_commit() {
     if [[ -f "$step_file" ]]; then
         step_num=$(cat "$step_file")
         ((step_num++))
+    else
+        # Ensure .claude directory exists
+        mkdir -p .claude
     fi
     
     # Generate commit message if not provided
@@ -373,6 +383,8 @@ function do_rollback_commit() {
                 git log --oneline "$branch_start..HEAD"
                 if IO:confirm "Rollback to start of branch (delete all commits above)?"; then
                     git reset --hard "$branch_start"
+                    # Ensure .claude directory exists and reset step counter
+                    mkdir -p .claude
                     echo "0" > .claude/step_counter
                     IO:success "Rolled back to start of branch"
                 fi
