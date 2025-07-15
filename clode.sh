@@ -52,7 +52,7 @@ option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|M|MESSAGE|custom commit message|
 option|T|TMP_DIR|folder for temp files|.tmp
 choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,push,p,final,f,status,s,check,env,update
-param|?|input|input file/text
+param|?|input|input text
 " -v -e '^#' -e '^\s*$'
 }
 
