@@ -43,15 +43,14 @@ flag|h|help|show usage
 flag|Q|QUIET|no output
 flag|V|VERBOSE|also show debug messages
 flag|f|FORCE|do not ask for confirmation (always yes)
-option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
-option|T|TMP_DIR|folder for temp files|.tmp
 flag|A|AUTO_COMMIT|automatically generate commit messages with Claude Code CLI
 flag|D|DRY_RUN|show what would be done without executing
 flag|G|GENERATE|use Claude Code CLI to generate CLAUDE.md file
 flag|S|SQUASH|squash all intermediate commits before push
 option|C|COMMIT|commit type for intermediate commits|fix
+option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|M|MESSAGE|custom commit message|
-#option|W|WIDTH|width of the picture|800
+option|T|TMP_DIR|folder for temp files|.tmp
 choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,push,p,final,f,check,env,update
 param|?|input|input file/text
 " -v -e '^#' -e '^\s*$'
