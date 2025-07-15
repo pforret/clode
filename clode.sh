@@ -47,6 +47,7 @@ flag|A|AUTO_COMMIT|automatically generate commit messages with Claude Code CLI
 flag|D|DRY_RUN|show what would be done without executing
 flag|G|GENERATE|use Claude Code CLI to generate CLAUDE.md file
 flag|S|SQUASH|squash all intermediate commits before push
+flag|B|DELETE_BRANCH|automatically delete feature branch after final commit
 option|C|COMMIT|commit type for intermediate commits|fix
 option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|M|MESSAGE|custom commit message|
@@ -106,6 +107,8 @@ function Script:main() {
     #TIP:> $script_prefix final
     #TIP: use «$script_prefix final -A» to auto-generate commit messages with Claude Code CLI
     #TIP:> $script_prefix final --AUTO_COMMIT
+    #TIP: use «$script_prefix final -B» to automatically delete feature branch after push
+    #TIP:> $script_prefix final --DELETE_BRANCH
     do_final_commit
     ;;
 
@@ -549,9 +552,80 @@ Requirements:
     fi
 }
 
+function delete_feature_branch() {
+    local branch_name="$1"
+    local main_branch="main"
+    
+    # Check if main branch exists, fall back to master
+    if ! git show-ref --verify --quiet "refs/heads/main"; then
+        if git show-ref --verify --quiet "refs/heads/master"; then
+            main_branch="master"
+        else
+            IO:alert "Neither 'main' nor 'master' branch found. Cannot switch branches."
+            return 1
+        fi
+    fi
+    
+    # Switch to main branch
+    if git checkout "$main_branch"; then
+        IO:success "Switched to $main_branch branch"
+        
+        # Delete the feature branch locally
+        if git branch -d "$branch_name"; then
+            IO:success "Deleted local branch: $branch_name"
+        else
+            IO:alert "Failed to delete local branch: $branch_name"
+            return 1
+        fi
+        
+        # Delete the remote branch if it exists
+        if git ls-remote --heads origin "$branch_name" | grep -q "$branch_name"; then
+            if git push origin --delete "$branch_name"; then
+                IO:success "Deleted remote branch: origin/$branch_name"
+            else
+                IO:alert "Failed to delete remote branch: origin/$branch_name"
+            fi
+        else
+            IO:debug "Remote branch origin/$branch_name does not exist"
+        fi
+        
+        # Clean up .claude directory
+        if [[ -d ".claude" ]]; then
+            [[ -f ".claude/current_branch" ]] && rm ".claude/current_branch"
+            [[ -f ".claude/step_counter" ]] && rm ".claude/step_counter"
+            IO:debug "Cleaned up .claude directory"
+        fi
+        
+        IO:success "Branch cleanup completed. You're now on $main_branch branch."
+    else
+        IO:die "Failed to switch to $main_branch branch"
+    fi
+}
+
 function do_final_commit() {
+    local current_branch
+    current_branch=$(git branch --show-current)
+    
+    # Call the push function with squash enabled
     SQUASH=1
     do_push_branch
+    
+    # After successful push, offer to delete the feature branch
+    if [[ "$current_branch" != "main" && "$current_branch" != "master" ]]; then
+        #shellcheck disable=SC2154
+        if ((DELETE_BRANCH)); then
+            # Automatic deletion
+            IO:announce "Automatically deleting feature branch: $current_branch"
+            delete_feature_branch "$current_branch"
+        else
+            # Prompt for deletion
+            if IO:confirm "Delete feature branch '$current_branch' and switch to main?"; then
+                delete_feature_branch "$current_branch"
+            else
+                IO:print "Feature branch '$current_branch' kept. Use 'git branch -d $current_branch' to delete it later."
+            fi
+        fi
+    fi
 }
 
 function do_show_status() {
@@ -661,7 +735,6 @@ function do_show_status() {
             echo "$all_changed_files" | while read -r file; do
                 local status
                 status=$(git status --porcelain "$file" | cut -c1-2)
-                echo "[$status]"
                 case "$status" in
                     " M"|"M "|"MM") IO:print "   ${txtBold}M${txtReset} $file" ;;
                     " A"|"A "|"AM") IO:print "   ${txtInfo}A${txtReset} $file" ;;
