@@ -45,11 +45,12 @@ flag|V|VERBOSE|also show debug messages
 flag|f|FORCE|do not ask for confirmation (always yes)
 option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|T|TMP_DIR|folder for temp files|.tmp
-option|c|commit|commit type for intermediate commits|fix
-option|m|message|custom commit message|
-flag|s|squash|squash all intermediate commits before push
-flag|d|dry_run|show what would be done without executing
-flag|g|generate|use Claude Code CLI to generate CLAUDE.md file
+flag|A|AUTO_COMMIT|automatically generate commit messages with Claude Code CLI
+flag|D|DRY_RUN|show what would be done without executing
+flag|G|GENERATE|use Claude Code CLI to generate CLAUDE.md file
+flag|S|SQUASH|squash all intermediate commits before push
+option|C|COMMIT|commit type for intermediate commits|fix
+option|M|MESSAGE|custom commit message|
 #option|W|WIDTH|width of the picture|800
 choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,push,p,final,f,check,env,update
 param|?|input|input file/text
@@ -70,8 +71,8 @@ function Script:main() {
   prep)
     #TIP: use «$script_prefix prep» to prepare project for AI development
     #TIP:> $script_prefix prep
-    #TIP: use «$script_prefix prep -g» to generate CLAUDE.md with Claude Code CLI
-    #TIP:> $script_prefix prep --generate
+    #TIP: use «$script_prefix prep -G» to generate CLAUDE.md with Claude Code CLI
+    #TIP:> $script_prefix prep --GENERATE
     do_prep_project
     ;;
 
@@ -82,8 +83,8 @@ function Script:main() {
     ;;
 
   inter | i)
-    #TIP: use «$script_prefix inter [-m "message"]» to create intermediate commit
-    #TIP:> $script_prefix inter -m "implemented feature"
+    #TIP: use «$script_prefix inter [-M "message"]» to create intermediate commit
+    #TIP:> $script_prefix inter -M "implemented feature"
     do_intermediate_commit
     ;;
 
@@ -96,12 +97,16 @@ function Script:main() {
   push | p)
     #TIP: use «$script_prefix push» to squash and push branch
     #TIP:> $script_prefix push
+    #TIP: use «$script_prefix push -A» to auto-generate commit messages with Claude Code CLI
+    #TIP:> $script_prefix push --AUTO_COMMIT
     do_push_branch
     ;;
 
   final | f)
     #TIP: use «$script_prefix final» to squash all commits and push
     #TIP:> $script_prefix final
+    #TIP: use «$script_prefix final -A» to auto-generate commit messages with Claude Code CLI
+    #TIP:> $script_prefix final --AUTO_COMMIT
     do_final_commit
     ;;
 
@@ -143,18 +148,18 @@ function do_prep_project() {
     # Create CLAUDE.md if it doesn't exist
     if [[ ! -f "CLAUDE.md" ]]; then
         #shellcheck disable=SC2154
-        if ((generate)) && command -v claude >/dev/null 2>&1; then
+        if ((GENERATE)) && command -v claude >/dev/null 2>&1; then
             IO:announce "Generating CLAUDE.md with Claude Code CLI..."
             if claude generate-claude-md > CLAUDE.md 2>/dev/null; then
                 IO:success "Generated CLAUDE.md using Claude Code CLI"
             else
                 IO:alert "Failed to generate with Claude Code CLI, falling back to template"
-                generate=0  # Fall back to template approach
+                GENERATE=0  # Fall back to template approach
             fi
         fi
         
         # Use template or fallback if generation wasn't requested or failed
-        if ! ((generate)) || [[ ! -f "CLAUDE.md" ]]; then
+        if ! ((GENERATE)) || [[ ! -f "CLAUDE.md" ]]; then
             local template_path="$script_install_folder/templates/CLAUDE.md"
             if [[ -f "$template_path" ]]; then
                 cp "$template_path" "CLAUDE.md"
@@ -216,6 +221,11 @@ function do_create_branch() {
         IO:die "Not in a git repository. Run 'clode prep' first."
     fi
     
+    # Show current branch for debugging
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+    IO:debug "Current branch: $current_branch"
+    
     # Check for uncommitted changes
     if [[ -n "$(git status --porcelain)" ]]; then
         if IO:confirm "You have uncommitted changes. Commit them first?"; then
@@ -226,18 +236,49 @@ function do_create_branch() {
         fi
     fi
     
-    # Create and switch to new branch
-    git checkout -b "$branch_name"
-    IO:success "Created and switched to branch: $branch_name"
-    
-    # Store branch info for later use
-    echo "$branch_name" > .claude/current_branch
-    echo "0" > .claude/step_counter
+    # Check if branch already exists
+    if git show-ref --verify --quiet "refs/heads/$branch_name"; then
+        IO:alert "Branch '$branch_name' already exists"
+        if IO:confirm "Switch to existing branch?"; then
+            if git checkout "$branch_name"; then
+                # Verify the branch switch worked
+                local actual_branch
+                actual_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+                if [[ "$actual_branch" == "$branch_name" ]]; then
+                    IO:success "Switched to existing branch: $branch_name"
+                else
+                    IO:die "Failed to switch to branch: $branch_name. Current branch: $actual_branch"
+                fi
+            else
+                IO:die "Failed to switch to branch: $branch_name"
+            fi
+        else
+            IO:die "Branch creation cancelled"
+        fi
+    else
+        # Create and switch to new branch
+        if git checkout -b "$branch_name"; then
+            # Verify the branch switch worked
+            local actual_branch
+            actual_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+            if [[ "$actual_branch" == "$branch_name" ]]; then
+                IO:success "Created and switched to branch: $branch_name"
+                
+                # Store branch info for later use
+                echo "$branch_name" > .claude/current_branch
+                echo "0" > .claude/step_counter
+            else
+                IO:die "Branch created but failed to switch. Current branch: $actual_branch"
+            fi
+        else
+            IO:die "Failed to create branch: $branch_name"
+        fi
+    fi
 }
 
 function do_intermediate_commit() {
-    local commit_type="${commit:-fix}"
-    local commit_msg="${message:-}"
+    local commit_type="${COMMIT:-fix}"
+    local commit_msg="${MESSAGE:-}"
     local step_file=".claude/step_counter"
     local current_date
     current_date=$(date +%Y-%m-%d)
@@ -286,7 +327,7 @@ function do_intermediate_commit() {
     full_commit_msg="${commit_type}: ${commit_msg} #intermediate #step:[$(printf "%02d" $step_num)] #date:[$current_date]"
 
     #shellcheck disable=SC2154
-    if ((dry_run)); then
+    if ((DRY_RUN)); then
         IO:print "Would commit: $full_commit_msg"
         return 0
     fi
@@ -369,14 +410,14 @@ function do_push_branch() {
     # Count intermediate commits
     intermediate_commits=$(git log --oneline --grep="#intermediate" | wc -l)
     
-    if [[ $intermediate_commits -gt 1 ]] && ! ((squash)); then
+    if [[ $intermediate_commits -gt 1 ]] && ! ((SQUASH)); then
         IO:print "Found $intermediate_commits intermediate commits"
         if IO:confirm "Squash intermediate commits into single commit?"; then
-            squash=1
+            SQUASH=1
         fi
     fi
     
-    if ((squash)) && [[ $intermediate_commits -gt 1 ]]; then
+    if ((SQUASH)) && [[ $intermediate_commits -gt 1 ]]; then
         IO:announce "Squashing $intermediate_commits intermediate commits..."
         
         # Find the commit before first intermediate commit
@@ -384,13 +425,25 @@ function do_push_branch() {
         before_base=$(git rev-parse "$base_commit^")
         
         # Create squash commit message
-        final_msg="feat: completed feature implementation
+        local default_msg
+        default_msg="feat: completed feature implementation
         
 $(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-9]* /- /')
 
 🤖 Generated with Claude Code"
         
-        if ((dry_run)); then
+        #shellcheck disable=SC2154
+        if ((AUTO_COMMIT)) || { ! ((AUTO_COMMIT)) && IO:confirm "Generate commit message with Claude Code CLI?"; }; then
+            IO:announce "Generating commit message with Claude Code CLI..."
+            final_msg=$(generate_commit_message "$before_base" "$default_msg")
+            final_msg="$final_msg
+
+🤖 Generated with Claude Code"
+        else
+            final_msg="$default_msg"
+        fi
+        
+        if ((DRY_RUN)); then
             IO:print "Would squash commits from $before_base to HEAD"
             IO:print "Final commit message:"
             IO:print "$final_msg"
@@ -405,7 +458,7 @@ $(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-
     fi
     
     # Push to remote
-    if ((dry_run)); then
+    if ((DRY_RUN)); then
         IO:print "Would push branch: $current_branch"
         return 0
     fi
@@ -427,8 +480,60 @@ $(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-
     IO:print "3. Delete feature branch after merge"
 }
 
+function generate_commit_message() {
+    local before_base="$1"
+    local default_message="$2"
+    
+    if ! command -v claude >/dev/null 2>&1; then
+        IO:debug "Claude CLI not available, using default message"
+        echo "$default_message"
+        return 0
+    fi
+    
+    # Get the diff of changes
+    local diff_output
+    diff_output=$(git diff "$before_base..HEAD" --stat)
+    
+    # Get list of changed files
+    local changed_files
+    changed_files=$(git diff --name-only "$before_base..HEAD")
+    
+    # Get commit messages from intermediate commits
+    local commit_messages
+    commit_messages=$(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-9]* //')
+    
+    # Create a prompt for Claude to generate commit message
+    local claude_prompt="Based on the following git changes, generate a concise commit message (max 3 lines total):
+
+CHANGED FILES:
+$changed_files
+
+DIFF STATS:
+$diff_output
+
+INTERMEDIATE COMMIT MESSAGES:
+$commit_messages
+
+Requirements:
+- First line: conventional commit format (feat:, fix:, docs:, refactor:, etc.)
+- Maximum 3 lines total
+- Summarize the overall purpose and impact
+- Focus on WHAT was accomplished, not HOW"
+    
+    # Generate commit message with Claude
+    local generated_msg
+    generated_msg=$(echo "$claude_prompt" | claude 2>/dev/null)
+    
+    if [[ -n "$generated_msg" ]]; then
+        echo "$generated_msg"
+    else
+        IO:debug "Claude generation failed, using default message"
+        echo "$default_message"
+    fi
+}
+
 function do_final_commit() {
-    squash=1
+    SQUASH=1
     do_push_branch
 }
 
