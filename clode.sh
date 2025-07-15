@@ -45,6 +45,7 @@ flag|V|VERBOSE|also show debug messages
 flag|f|FORCE|do not ask for confirmation (always yes)
 flag|A|AUTO_COMMIT|automatically generate commit messages with Claude Code CLI
 flag|D|DRY_RUN|show what would be done without executing
+flag|E|ERASE|clear command history after final commit
 flag|G|GENERATE|use Claude Code CLI to generate CLAUDE.md file
 flag|S|SQUASH|squash all intermediate commits before push
 option|C|COMMIT|commit type for intermediate commits|fix
@@ -106,6 +107,8 @@ function Script:main() {
     #TIP:> $script_prefix final
     #TIP: use «$script_prefix final -A» to auto-generate commit messages with Claude Code CLI
     #TIP:> $script_prefix final --AUTO_COMMIT
+    #TIP: use «$script_prefix final -E» to automatically clear command history after final commit
+    #TIP:> $script_prefix final --ERASE
     do_final_commit
     ;;
 
@@ -241,8 +244,14 @@ function do_create_branch() {
     # Check for uncommitted changes
     if [[ -n "$(git status --porcelain)" ]]; then
         if IO:confirm "You have uncommitted changes. Commit them first?"; then
-            git add -A
-            git commit -m "feat: save work before creating new branch"
+            #shellcheck disable=SC2154
+            if ((DRY_RUN)); then
+                IO:print "Would run: git add -A"
+                IO:print "Would run: git commit -m \"feat: save work before creating new branch\""
+            else
+                git add -A
+                git commit -m "feat: save work before creating new branch"
+            fi
         else
             IO:die "Please commit or stash your changes first"
         fi
@@ -252,38 +261,52 @@ function do_create_branch() {
     if git show-ref --verify --quiet "refs/heads/$branch_name"; then
         IO:alert "Branch '$branch_name' already exists"
         if IO:confirm "Switch to existing branch?"; then
-            if git checkout "$branch_name"; then
-                # Verify the branch switch worked
-                local actual_branch
-                actual_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
-                if [[ "$actual_branch" == "$branch_name" ]]; then
-                    IO:success "Switched to existing branch: $branch_name"
-                else
-                    IO:die "Failed to switch to branch: $branch_name. Current branch: $actual_branch"
-                fi
+            if ((DRY_RUN)); then
+                IO:print "Would run: git checkout $branch_name"
+                IO:print "Would switch to existing branch: $branch_name"
+                return 0
             else
-                IO:die "Failed to switch to branch: $branch_name"
+                if git checkout "$branch_name"; then
+                    # Verify the branch switch worked
+                    local actual_branch
+                    actual_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+                    if [[ "$actual_branch" == "$branch_name" ]]; then
+                        IO:success "Switched to existing branch: $branch_name"
+                    else
+                        IO:die "Failed to switch to branch: $branch_name. Current branch: $actual_branch"
+                    fi
+                else
+                    IO:die "Failed to switch to branch: $branch_name"
+                fi
             fi
         else
             IO:die "Branch creation cancelled"
         fi
     else
         # Create and switch to new branch
-        if git checkout -b "$branch_name"; then
-            # Verify the branch switch worked
-            local actual_branch
-            actual_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
-            if [[ "$actual_branch" == "$branch_name" ]]; then
-                IO:success "Created and switched to branch: $branch_name"
-                
-                # Store branch info for later use
-                echo "$branch_name" > .claude/current_branch
-                echo "0" > .claude/step_counter
-            else
-                IO:die "Branch created but failed to switch. Current branch: $actual_branch"
-            fi
+        if ((DRY_RUN)); then
+            IO:print "Would run: git checkout -b $branch_name"
+            IO:print "Would create and switch to new branch: $branch_name"
+            IO:print "Would create: .claude/current_branch"
+            IO:print "Would create: .claude/step_counter"
+            return 0
         else
-            IO:die "Failed to create branch: $branch_name"
+            if git checkout -b "$branch_name"; then
+                # Verify the branch switch worked
+                local actual_branch
+                actual_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+                if [[ "$actual_branch" == "$branch_name" ]]; then
+                    IO:success "Created and switched to branch: $branch_name"
+                    
+                    # Store branch info for later use
+                    echo "$branch_name" > .claude/current_branch
+                    echo "0" > .claude/step_counter
+                else
+                    IO:die "Branch created but failed to switch. Current branch: $actual_branch"
+                fi
+            else
+                IO:die "Failed to create branch: $branch_name"
+            fi
         fi
     fi
 }
@@ -292,9 +315,7 @@ function do_intermediate_commit() {
     local commit_type="${COMMIT:-fix}"
     local commit_msg="${MESSAGE:-}"
     local step_file=".claude/step_counter"
-    local current_date
-    current_date=$(date +%Y-%m-%d)
-    
+
     # Validate we're in a git repo and on a feature branch
     if [[ ! -d ".git" ]]; then
         IO:die "Not in a git repository"
@@ -316,30 +337,39 @@ function do_intermediate_commit() {
         mkdir -p .claude
     fi
     
-    # Generate commit message if not provided
-    if [[ -z "$commit_msg" ]]; then
-        # Auto-generate based on changed files
-        local changed_files
-        changed_files=$(git diff --name-only HEAD)
-        if [[ -n "$changed_files" ]]; then
-            local file_count
-            file_count=$(echo "$changed_files" | wc -l)
-            commit_msg="update $file_count file(s)"
-        else
-            commit_msg="checkpoint update"
-        fi
-    fi
-    
     # Check for changes
     if [[ -z "$(git status --porcelain)" ]]; then
         IO:alert "No changes to commit"
         return 0
     fi
     
-    # Create the intermediate commit
+    # Stage all changes first
     git add -A
+    
+    # Generate commit message if not provided
+    if [[ -z "$commit_msg" ]]; then
+        # Auto-generate based on staged files
+        local changed_files
+        changed_files=$(git diff --name-only --staged)
+        if [[ -n "$changed_files" ]]; then
+            local file_count
+            file_count=$(echo "$changed_files" | wc -l)
+            
+            # Get top 5 most changed files by lines changed
+            local top_files
+            top_files=$(git diff --stat --staged | sed '$d' | sort -k2 -nr | head -5 | awk '{print $1}' | paste -sd, -)
+            
+            if [[ -n "$top_files" ]]; then
+                commit_msg="update $file_count file(s): $top_files"
+            else
+                commit_msg="update $file_count file(s)"
+            fi
+        else
+            commit_msg="checkpoint update"
+        fi
+    fi
     local full_commit_msg
-    full_commit_msg="${commit_type}: ${commit_msg} #intermediate #step:[$(printf "%02d" $step_num)] #date:[$current_date]"
+    full_commit_msg="${commit_type}: ${commit_msg} #intermediate #step:[$(printf "%02d" $step_num)]"
 
     #shellcheck disable=SC2154
     if ((DRY_RUN)); then
@@ -443,16 +473,15 @@ function do_push_branch() {
         
         # Create squash commit message
         local default_msg
-        default_msg="feat: completed feature implementation
+        default_msg="$COMMIT: completed feature implementation #squashed #clode.sh
         
 $(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-9]* /- /')
-
-🤖 Generated with Claude Code"
+"
         
         #shellcheck disable=SC2154
         if ((AUTO_COMMIT)) || { ! ((AUTO_COMMIT)) && IO:confirm "Generate commit message with Claude Code CLI?"; }; then
             IO:announce "Generating commit message with Claude Code CLI..."
-            final_msg=$(generate_commit_message "$before_base" "$default_msg")
+            final_msg=$(gen_commit_with_claude "$before_base" "$default_msg")
             final_msg="$final_msg
 
 🤖 Generated with Claude Code"
@@ -497,7 +526,7 @@ $(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-
     IO:print "3. Delete feature branch after merge"
 }
 
-function generate_commit_message() {
+function gen_commit_with_claude() {
     local before_base="$1"
     local default_message="$2"
     
@@ -552,6 +581,141 @@ Requirements:
 function do_final_commit() {
     SQUASH=1
     do_push_branch
+    
+    # After successful final commit, check if user wants to clear history
+    #shellcheck disable=SC2154
+    if ((ERASE)) || { ! ((ERASE)) && IO:confirm "Clear command history for fresh start?"; }; then
+        IO:announce "Clearing command history..."
+        if ((DRY_RUN)); then
+            IO:print "Would execute: /clear command"
+        else
+            # Execute the clear command
+            clear
+            IO:success "Command history cleared - ready for new feature development"
+        fi
+    fi
+}
+
+function do_show_status() {
+    # Validate we're in a git repo
+    if [[ ! -d ".git" ]]; then
+        IO:die "Not in a git repository. Run 'clode prep' first."
+    fi
+    
+    # Get current branch
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+    
+    # Display current branch
+    IO:print "📍  ${txtBold}Current branch:${txtReset}    $current_branch"
+    
+    # Check if we're on main/master
+    if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
+        IO:alert "You're on the main branch"
+        return 0
+    fi
+    
+    # Find last final commit (before any intermediate commits)
+    local last_final_commit
+    last_final_commit=$(git log --oneline --grep="#intermediate" | tail -1 | awk '{print $1}')
+    
+    if [[ -n "$last_final_commit" ]]; then
+        # Get the commit before the first intermediate commit
+        local before_base
+        before_base=$(git rev-parse "$last_final_commit^" 2>/dev/null)
+        
+        if [[ -n "$before_base" ]]; then
+            local final_commit_msg
+            final_commit_msg=$(git log --oneline -1 "$before_base" | sed 's/^[a-f0-9]* //')
+            IO:print "🎯  ${txtBold}Last final commit:${txtReset} $final_commit_msg"
+        else
+            IO:print "🎯  ${txtBold}Last final commit:${txtReset} (initial commit)"
+        fi
+    else
+        # No intermediate commits found, show last commit
+        local last_commit
+        last_commit=$(git log --oneline -1 2>/dev/null | sed 's/^[a-f0-9]* //')
+        IO:print "🎯  ${txtBold}Last final commit:${txtReset} $last_commit"
+    fi
+    
+    # List all intermediate commits
+    local intermediate_commits
+    intermediate_commits=$(git log --oneline --grep="#intermediate")
+    
+    if [[ -n "$intermediate_commits" ]]; then
+        local count
+        count=$(echo "$intermediate_commits" | wc -l | xargs)
+        IO:print "🔄  ${txtBold}Intermediate commits ($count):${txtReset}"
+        echo "$intermediate_commits" | while read -r commit; do
+            local msg
+            msg=$(echo "$commit" | sed 's/^[a-f0-9]* //')
+            IO:print "   • $msg"
+        done
+    else
+        IO:print "🔄  ${txtBold}Intermediate commits:${txtReset} none"
+    fi
+    
+    # Show changed files since last intermediate commit
+    local last_intermediate
+    last_intermediate=$(git log --oneline --grep="#intermediate" -1 | awk '{print $1}')
+    
+    if [[ -n "$last_intermediate" ]]; then
+        # Show both committed changes since last intermediate AND uncommitted changes
+        local committed_files uncommitted_files untracked_files all_changed_files
+        committed_files=$(git diff --name-only "$last_intermediate..HEAD")
+        uncommitted_files=$(git diff --name-only)
+        untracked_files=$(git status --porcelain | grep "^??" | cut -c4-)
+        
+        # Combine and deduplicate the files
+        all_changed_files=$(echo -e "$committed_files\n$uncommitted_files\n$untracked_files" | sort -u | grep -v '^$')
+        
+        if [[ -n "$all_changed_files" ]]; then
+            local file_count
+            file_count=$(echo "$all_changed_files" | wc -l | xargs)
+            IO:print "📝  ${txtBold}Changed files since last intermediate ($file_count):${txtReset}"
+            echo "$all_changed_files" | while read -r file; do
+                local status
+                status=$(git status --porcelain "$file" | cut -c1-2)
+                case "$status" in
+                    " M"|"M "|"MM") IO:print "   ${txtBold}M${txtReset} $file" ;;
+                    " A"|"A "|"AM") IO:print "   ${txtInfo}A${txtReset} $file" ;;
+                    " D"|"D "|"DM") IO:print "   ${txtError}D${txtReset} $file" ;;
+                    "??") IO:alert "? $file" ;;
+                    *) IO:print "   • $file" ;;
+                esac
+            done
+        else
+            IO:print "📝  ${txtBold}Changed files since last intermediate:${txtReset} none"
+        fi
+    else
+        # No intermediate commits, show uncommitted changes and untracked files
+        local uncommitted_files untracked_files all_changed_files
+        uncommitted_files=$(git diff --name-only)
+        untracked_files=$(git status --porcelain | grep "^??" | cut -c4-)
+        
+        # Combine and deduplicate the files
+        all_changed_files=$(echo -e "$uncommitted_files\n$untracked_files" | sort -u | grep -v '^$')
+        
+        if [[ -n "$all_changed_files" ]]; then
+            local file_count
+            file_count=$(echo "$all_changed_files" | wc -l | xargs)
+            IO:print "📝  ${txtBold}Changed files since last commit ($file_count):${txtReset}"
+            echo "$all_changed_files" | while read -r file; do
+                local status
+                status=$(git status --porcelain "$file" | cut -c1-2)
+                echo "[$status]"
+                case "$status" in
+                    " M"|"M "|"MM") IO:print "   ${txtBold}M${txtReset} $file" ;;
+                    " A"|"A "|"AM") IO:print "   ${txtInfo}A${txtReset} $file" ;;
+                    " D"|"D "|"DM") IO:print "   ${txtError}D${txtReset} $file" ;;
+                    "??") IO:alert "? $file" ;;
+                    *) IO:print "   • $file" ;;
+                esac
+            done
+        else
+            IO:print "📝  ${txtBold}Changed files since last commit:${txtReset} none"
+        fi
+    fi
 }
 
 function do_show_status() {
