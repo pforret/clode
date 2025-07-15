@@ -44,11 +44,12 @@ flag|Q|QUIET|no output
 flag|V|VERBOSE|also show debug messages
 flag|f|FORCE|do not ask for confirmation (always yes)
 option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
-option|T|TMP_DIR|folder for temp files|/tmp/$script_prefix
+option|T|TMP_DIR|folder for temp files|.tmp
 option|c|commit|commit type for intermediate commits|fix
 option|m|message|custom commit message|
 flag|s|squash|squash all intermediate commits before push
 flag|d|dry_run|show what would be done without executing
+flag|g|generate|use Claude Code CLI to generate CLAUDE.md file
 #option|W|WIDTH|width of the picture|800
 choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,push,p,final,f,check,env,update
 param|?|input|input file/text
@@ -69,6 +70,8 @@ function Script:main() {
   prep)
     #TIP: use «$script_prefix prep» to prepare project for AI development
     #TIP:> $script_prefix prep
+    #TIP: use «$script_prefix prep -g» to generate CLAUDE.md with Claude Code CLI
+    #TIP:> $script_prefix prep --generate
     do_prep_project
     ;;
 
@@ -139,45 +142,53 @@ function do_prep_project() {
     
     # Create CLAUDE.md if it doesn't exist
     if [[ ! -f "CLAUDE.md" ]]; then
-        cat > CLAUDE.md << 'EOF'
-# CLAUDE.md
-
-This file provides guidance to Claude Code when working with this project.
-
-## Project Overview
-[Describe your project here]
-
-## Development Commands
-- `./clode.sh branch` - Create new feature branch
-- `./clode.sh inter` - Create intermediate commit
-- `./clode.sh rollback` - Rollback last commit
-- `./clode.sh push` - Squash and push branch
-
-## Architecture
-[Describe key components and patterns]
-
-## Testing
-[Describe how to run tests]
-EOF
-        IO:success "Created CLAUDE.md template"
+        #shellcheck disable=SC2154
+        if ((generate)) && command -v claude >/dev/null 2>&1; then
+            IO:announce "Generating CLAUDE.md with Claude Code CLI..."
+            if claude generate-claude-md > CLAUDE.md 2>/dev/null; then
+                IO:success "Generated CLAUDE.md using Claude Code CLI"
+            else
+                IO:alert "Failed to generate with Claude Code CLI, falling back to template"
+                generate=0  # Fall back to template approach
+            fi
+        fi
+        
+        # Use template or fallback if generation wasn't requested or failed
+        if ! ((generate)) || [[ ! -f "CLAUDE.md" ]]; then
+            local template_path="$script_install_folder/templates/CLAUDE.md"
+            if [[ -f "$template_path" ]]; then
+                cp "$template_path" "CLAUDE.md"
+                IO:success "Created CLAUDE.md from template"
+            else
+                IO:alert "Template file not found: $template_path"
+                IO:alert "Creating basic CLAUDE.md file"
+                {
+                    echo "# CLAUDE.md"
+                    echo ""
+                    echo "This file provides guidance to Claude Code when working with this project."
+                } > CLAUDE.md
+                IO:success "Created basic CLAUDE.md"
+            fi
+        fi
     fi
     
     # Create planning.md if it doesn't exist
     if [[ ! -f "planning.md" ]]; then
-        cat > planning.md << 'EOF'
-# Project Planning
-
-## Current Task
-[Describe what you're working on]
-
-## Goals
-- [ ] Goal 1
-- [ ] Goal 2
-
-## Notes
-[Development notes and decisions]
-EOF
-        IO:success "Created planning.md template"
+        local template_path="$script_install_folder/templates/planning.md"
+        if [[ -f "$template_path" ]]; then
+            cp "$template_path" "planning.md"
+            IO:success "Created planning.md from template"
+        else
+            IO:alert "Template file not found: $template_path"
+            IO:alert "Creating basic planning.md file"
+            {
+                echo "# Project Planning"
+                echo ""
+                echo "## Current Task"
+                echo "[Describe what you're working on]"
+            } > planning.md
+            IO:success "Created basic planning.md"
+        fi
     fi
     
     # Initialize git if not already initialized
