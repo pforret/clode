@@ -14,9 +14,9 @@ Prep your projects for AI software development assistants
 
 ```
 Program : clode  by peter@forret.com
-Version : v0.1.1 (Jul 15 14:26:11 2025)
+Version : v0.2.0 (Jul 15 19:26:53 2025)
 Purpose : Prep your projects for AI software development assistants
-Usage   : clode [-h] [-Q] [-V] [-f] [-A] [-D] [-G] [-S] [-C <COMMIT>] [-L <LOG_DIR>] [-M <MESSAGE>] [-T <TMP_DIR>] <action> <input?>
+Usage   : clode [-h] [-Q] [-V] [-f] [-A] [-D] [-E] [-G] [-S] [-C <COMMIT>] [-L <LOG_DIR>] [-M <MESSAGE>] [-T <TMP_DIR>] <action> <input?>
 Flags, options and parameters:
     -h|--help        : [flag] show usage [default: off]
     -Q|--QUIET       : [flag] no output [default: off]
@@ -24,6 +24,7 @@ Flags, options and parameters:
     -f|--FORCE       : [flag] do not ask for confirmation (always yes) [default: off]
     -A|--AUTO_COMMIT : [flag] automatically generate commit messages with Claude Code CLI [default: off]
     -D|--DRY_RUN     : [flag] show what would be done without executing [default: off]
+    -E|--ERASE       : [flag] clear command history after final commit [default: off]
     -G|--GENERATE    : [flag] use Claude Code CLI to generate CLAUDE.md file [default: off]
     -S|--SQUASH      : [flag] squash all intermediate commits before push [default: off]
     -C|--COMMIT <?>  : [option] commit type for intermediate commits  [default: fix]
@@ -31,27 +32,40 @@ Flags, options and parameters:
     -M|--MESSAGE <?> : [option] custom commit message
     -T|--TMP_DIR <?> : [option] folder for temp files  [default: .tmp]
     <action>         : [choice] action to perform  [options: prep,branch,b,inter,i,rollback,r,push,p,final,f,status,s,check,env,update]
-    <input>          : [parameter] input file/text (optional)
-```
-                                                                                          
+    <input>          : [parameter] input text (optional)
+                                                                                                 
 ### TIPS & EXAMPLES
-* use `clode prep` to prepare a repo for AI development
-* use `clode prep -G` to generate CLAUDE.md with Claude Code CLI
-* use `clode branch [name]` to create new feature branch
-* use `clode inter [-M "message"]` to create intermediate commit
-* use `clode rollback` to roll back to last checkpoint
-* use `clode rollback [target]` to roll back to specific checkpoint
-* use `clode push` to squash intermediate commits into one new one and push branch
-* use `clode push -A` to auto-generate commit messages with Claude Code CLI
-* use `clode final` to squash all commits and push
-* use `clode status` to show current git workflow status
-* use `clode check` to check if this script is ready to execute and what values the options/flags are
-* use `clode env` to generate an example .env file
-* use `clode update` to update to the latest version
-
-> bash script created with pforret/bashew
->
-> for bash development, also check out [pforret/setver](https://github.com/pforret/setver) 
+* use clode prep to prepare project for AI development
+  clode prep
+* use clode prep -G to generate CLAUDE.md with Claude Code CLI
+  clode prep --GENERATE
+* use clode branch [name] to create new feature branch
+  clode branch my-feature
+* use clode inter [-M "message"] to create intermediate commit
+  clode inter -M "implemented feature"
+* use clode rollback [target] to rollback commits
+  clode rollback last
+* use clode push to squash and push branch
+  clode push
+* use clode push -A to auto-generate commit messages with Claude Code CLI
+  clode push --AUTO_COMMIT
+* use clode final to squash all commits and push
+  clode final
+* use clode final -A to auto-generate commit messages with Claude Code CLI
+  clode final --AUTO_COMMIT
+* use clode final -E to automatically clear command history after final commit
+  clode final --ERASE
+* use clode status to show current git workflow status
+  clode status
+* use clode check to check if this script is ready to execute and what values the options/flags are
+  clode check
+* use clode env to generate an example .env file
+  clode env > .env
+* use clode update to update to the latest version
+  clode update
+* >>> bash script created with pforret/bashew
+* >>> for bash development, also check out pforret/setver and pforret/progressbar
+```
 
 ## ⚡️ Examples
 
