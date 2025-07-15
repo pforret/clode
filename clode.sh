@@ -45,8 +45,12 @@ flag|V|VERBOSE|also show debug messages
 flag|f|FORCE|do not ask for confirmation (always yes)
 option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|T|TMP_DIR|folder for temp files|/tmp/$script_prefix
+option|c|commit|commit type for intermediate commits|fix
+option|m|message|custom commit message|
+flag|s|squash|squash all intermediate commits before push
+flag|d|dry_run|show what would be done without executing
 #option|W|WIDTH|width of the picture|800
-choice|1|action|action to perform|action1,action2,check,env,update
+choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,push,p,final,f,check,env,update
 param|?|input|input file/text
 " -v -e '^#' -e '^\s*$'
 }
@@ -59,25 +63,43 @@ function Script:main() {
   IO:log "[$script_basename] $script_version started"
 
   Os:require "awk"
+  Os:require "git"
 
   case "${action,,}" in
-  action1)
-    #TIP: use «$script_prefix action1» to ...
-    #TIP:> $script_prefix action1
-    do_action1
+  prep)
+    #TIP: use «$script_prefix prep» to prepare project for AI development
+    #TIP:> $script_prefix prep
+    do_prep_project
     ;;
 
-  action2)
-    #TIP: use «$script_prefix action2» to ...
-    #TIP:> $script_prefix action2
-    do_action2
+  branch | b)
+    #TIP: use «$script_prefix branch [name]» to create new feature branch
+    #TIP:> $script_prefix branch my-feature
+    do_create_branch
     ;;
 
-  action3)
-    #TIP: use «$script_prefix action3» to ...
-    #TIP:> $script_prefix action3
-    # Os:require "convert" "imagemagick"
-    # CONVERT $input $output
+  inter | i)
+    #TIP: use «$script_prefix inter [-m "message"]» to create intermediate commit
+    #TIP:> $script_prefix inter -m "implemented feature"
+    do_intermediate_commit
+    ;;
+
+  rollback | r)
+    #TIP: use «$script_prefix rollback [target]» to rollback commits
+    #TIP:> $script_prefix rollback last
+    do_rollback_commit
+    ;;
+
+  push | p)
+    #TIP: use «$script_prefix push» to squash and push branch
+    #TIP:> $script_prefix push
+    do_push_branch
+    ;;
+
+  final | f)
+    #TIP: use «$script_prefix final» to squash all commits and push
+    #TIP:> $script_prefix final
+    do_final_commit
     ;;
 
   check | env)
@@ -109,19 +131,294 @@ function Script:main() {
 ## Put your helper scripts here
 #####################################################################
 
-function do_action1() {
-  IO:log "action1"
-  # Examples of required binaries/scripts and how to install them
-  # Os:require "ffmpeg"
-  # Os:require "convert" "imagemagick"
-  # Os:require "IO:progressbar" "basher install pforret/IO:progressbar"
-  # (code)
+function do_prep_project() {
+    IO:log "Preparing project for AI development"
+    
+    # Create necessary directories
+    [[ ! -d ".claude" ]] && mkdir -p ".claude" && IO:success "Created .claude/ directory"
+    
+    # Create CLAUDE.md if it doesn't exist
+    if [[ ! -f "CLAUDE.md" ]]; then
+        cat > CLAUDE.md << 'EOF'
+# CLAUDE.md
+
+This file provides guidance to Claude Code when working with this project.
+
+## Project Overview
+[Describe your project here]
+
+## Development Commands
+- `./clode.sh branch` - Create new feature branch
+- `./clode.sh inter` - Create intermediate commit
+- `./clode.sh rollback` - Rollback last commit
+- `./clode.sh push` - Squash and push branch
+
+## Architecture
+[Describe key components and patterns]
+
+## Testing
+[Describe how to run tests]
+EOF
+        IO:success "Created CLAUDE.md template"
+    fi
+    
+    # Create planning.md if it doesn't exist
+    if [[ ! -f "planning.md" ]]; then
+        cat > planning.md << 'EOF'
+# Project Planning
+
+## Current Task
+[Describe what you're working on]
+
+## Goals
+- [ ] Goal 1
+- [ ] Goal 2
+
+## Notes
+[Development notes and decisions]
+EOF
+        IO:success "Created planning.md template"
+    fi
+    
+    # Initialize git if not already initialized
+    if [[ ! -d ".git" ]]; then
+        git init
+        IO:success "Initialized git repository"
+    fi
+    
+    IO:success "Project prepared for AI development"
 }
 
-function do_action2() {
-  IO:log "action2"
-  # (code)
+function do_create_branch() {
+    local branch_name="${input:-}"
+    
+    # Generate branch name if not provided
+    if [[ -z "$branch_name" ]]; then
+        local timestamp
+        timestamp=$(date +%Y%m%d-%H%M)
+        branch_name="feature/ai-task-$timestamp"
+        IO:announce "Generated branch name: $branch_name"
+    fi
+    
+    # Validate we're in a git repo
+    if [[ ! -d ".git" ]]; then
+        IO:die "Not in a git repository. Run 'clode prep' first."
+    fi
+    
+    # Check for uncommitted changes
+    if [[ -n "$(git status --porcelain)" ]]; then
+        if IO:confirm "You have uncommitted changes. Commit them first?"; then
+            git add -A
+            git commit -m "feat: save work before creating new branch"
+        else
+            IO:die "Please commit or stash your changes first"
+        fi
+    fi
+    
+    # Create and switch to new branch
+    git checkout -b "$branch_name"
+    IO:success "Created and switched to branch: $branch_name"
+    
+    # Store branch info for later use
+    echo "$branch_name" > .claude/current_branch
+    echo "0" > .claude/step_counter
+}
 
+function do_intermediate_commit() {
+    local commit_type="${commit:-fix}"
+    local commit_msg="${message:-}"
+    local step_file=".claude/step_counter"
+    local current_date
+    current_date=$(date +%Y-%m-%d)
+    
+    # Validate we're in a git repo and on a feature branch
+    if [[ ! -d ".git" ]]; then
+        IO:die "Not in a git repository"
+    fi
+    
+    local current_branch
+    current_branch=$(git branch --show-current)
+    if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
+        IO:die "Cannot create intermediate commits on main/master branch"
+    fi
+    
+    # Get or initialize step counter
+    local step_num=1
+    if [[ -f "$step_file" ]]; then
+        step_num=$(cat "$step_file")
+        ((step_num++))
+    fi
+    
+    # Generate commit message if not provided
+    if [[ -z "$commit_msg" ]]; then
+        # Auto-generate based on changed files
+        local changed_files
+        changed_files=$(git diff --name-only HEAD)
+        if [[ -n "$changed_files" ]]; then
+            local file_count
+            file_count=$(echo "$changed_files" | wc -l)
+            commit_msg="update $file_count file(s)"
+        else
+            commit_msg="checkpoint update"
+        fi
+    fi
+    
+    # Check for changes
+    if [[ -z "$(git status --porcelain)" ]]; then
+        IO:alert "No changes to commit"
+        return 0
+    fi
+    
+    # Create the intermediate commit
+    git add -A
+    local full_commit_msg
+    full_commit_msg="${commit_type}: ${commit_msg} #intermediate #step:[$(printf "%02d" $step_num)] #date:[$current_date]"
+
+    #shellcheck disable=SC2154
+    if ((dry_run)); then
+        IO:print "Would commit: $full_commit_msg"
+        return 0
+    fi
+    
+    git commit -m "$full_commit_msg"
+    echo "$step_num" > "$step_file"
+    
+    IO:success "Created intermediate commit #$(printf "%02d" $step_num): $commit_msg"
+}
+
+function do_rollback_commit() {
+    local target="${input:-last}"
+    
+    # Validate we're in a git repo
+    if [[ ! -d ".git" ]]; then
+        IO:die "Not in a git repository"
+    fi
+    
+    case "$target" in
+        "last")
+            # Rollback last commit
+            local last_commit
+            last_commit=$(git log -1 --pretty=format:"%h %s")
+            if IO:confirm "Rollback last commit: $last_commit?"; then
+                git reset --hard HEAD~1
+                IO:success "Rolled back last commit"
+                
+                # Update step counter if it was an intermediate commit
+                if [[ "$last_commit" == *"#intermediate"* ]]; then
+                    local step_file=".claude/step_counter"
+                    if [[ -f "$step_file" ]]; then
+                        local current_step
+                        current_step=$(cat "$step_file")
+                        ((current_step > 0)) && echo $((current_step - 1)) > "$step_file"
+                    fi
+                fi
+            fi
+            ;;
+        "branch")
+            # Rollback to start of branch
+            local branch_start
+            branch_start=$(git merge-base HEAD main || git merge-base HEAD master)
+            if [[ -n "$branch_start" ]]; then
+                git log --oneline "$branch_start..HEAD"
+                if IO:confirm "Rollback to start of branch (delete all commits above)?"; then
+                    git reset --hard "$branch_start"
+                    echo "0" > .claude/step_counter
+                    IO:success "Rolled back to start of branch"
+                fi
+            else
+                IO:die "Cannot find branch starting point"
+            fi
+            ;;
+        *)
+            # Rollback to specific commit hash
+            if git rev-parse --verify "$target" &>/dev/null; then
+                if IO:confirm "Rollback to commit $target?"; then
+                    git reset --hard "$target"
+                    IO:success "Rolled back to commit $target"
+                fi
+            else
+                IO:die "Invalid commit hash: $target"
+            fi
+            ;;
+    esac
+}
+
+function do_push_branch() {
+  local current_branch intermediate_commits base_commit before_base final_msg
+    # Validate we're in a git repo and on feature branch
+    if [[ ! -d ".git" ]]; then
+        IO:die "Not in a git repository"
+    fi
+    
+    current_branch=$(git branch --show-current)
+    if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
+        IO:die "Cannot push from main/master branch"
+    fi
+    
+    # Count intermediate commits
+    intermediate_commits=$(git log --oneline --grep="#intermediate" | wc -l)
+    
+    if [[ $intermediate_commits -gt 1 ]] && ! ((squash)); then
+        IO:print "Found $intermediate_commits intermediate commits"
+        if IO:confirm "Squash intermediate commits into single commit?"; then
+            squash=1
+        fi
+    fi
+    
+    if ((squash)) && [[ $intermediate_commits -gt 1 ]]; then
+        IO:announce "Squashing $intermediate_commits intermediate commits..."
+        
+        # Find the commit before first intermediate commit
+        base_commit=$(git log --oneline --grep="#intermediate" | tail -1 | awk '{print $1}')
+        before_base=$(git rev-parse "$base_commit^")
+        
+        # Create squash commit message
+        final_msg="feat: completed feature implementation
+        
+$(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-9]* /- /')
+
+🤖 Generated with Claude Code"
+        
+        if ((dry_run)); then
+            IO:print "Would squash commits from $before_base to HEAD"
+            IO:print "Final commit message:"
+            IO:print "$final_msg"
+            return 0
+        fi
+        
+        # Perform interactive rebase (automated)
+        git reset --soft "$before_base"
+        git commit -m "$final_msg"
+        
+        IO:success "Squashed $intermediate_commits commits into single commit"
+    fi
+    
+    # Push to remote
+    if ((dry_run)); then
+        IO:print "Would push branch: $current_branch"
+        return 0
+    fi
+    
+    # Check if remote branch exists
+    if git ls-remote --heads origin "$current_branch" | grep -q "$current_branch"; then
+        git push --force-with-lease origin "$current_branch"
+    else
+        git push -u origin "$current_branch"
+    fi
+    
+    IO:success "Pushed branch: $current_branch"
+    
+    # Provide next steps
+    IO:print ""
+    IO:print "Next steps:"
+    IO:print "1. Create pull request on GitHub"
+    IO:print "2. Review and merge when ready"
+    IO:print "3. Delete feature branch after merge"
+}
+
+function do_final_commit() {
+    squash=1
+    do_push_branch
 }
 
 #####################################################################
