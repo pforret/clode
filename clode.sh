@@ -51,7 +51,7 @@ option|C|COMMIT|commit type for intermediate commits|fix
 option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|M|MESSAGE|custom commit message|
 option|T|TMP_DIR|folder for temp files|.tmp
-choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,push,p,final,f,check,env,update
+choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,push,p,final,f,status,s,check,env,update
 param|?|input|input file/text
 " -v -e '^#' -e '^\s*$'
 }
@@ -107,6 +107,12 @@ function Script:main() {
     #TIP: use «$script_prefix final -A» to auto-generate commit messages with Claude Code CLI
     #TIP:> $script_prefix final --AUTO_COMMIT
     do_final_commit
+    ;;
+
+  status | s)
+    #TIP: use «$script_prefix status» to show current git workflow status
+    #TIP:> $script_prefix status
+    do_show_status
     ;;
 
   check | env)
@@ -546,6 +552,128 @@ Requirements:
 function do_final_commit() {
     SQUASH=1
     do_push_branch
+}
+
+function do_show_status() {
+    # Validate we're in a git repo
+    if [[ ! -d ".git" ]]; then
+        IO:die "Not in a git repository. Run 'clode prep' first."
+    fi
+    
+    # Get current branch
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+    
+    # Display current branch
+    IO:print "📍  ${txtBold}Current branch:${txtReset}    $current_branch"
+    
+    # Check if we're on main/master
+    if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
+        IO:alert "You're on the main branch"
+        return 0
+    fi
+    
+    # Find last final commit (before any intermediate commits)
+    local last_final_commit
+    last_final_commit=$(git log --oneline --grep="#intermediate" | tail -1 | awk '{print $1}')
+    
+    if [[ -n "$last_final_commit" ]]; then
+        # Get the commit before the first intermediate commit
+        local before_base
+        before_base=$(git rev-parse "$last_final_commit^" 2>/dev/null)
+        
+        if [[ -n "$before_base" ]]; then
+            local final_commit_msg
+            final_commit_msg=$(git log --oneline -1 "$before_base" | sed 's/^[a-f0-9]* //')
+            IO:print "🎯  ${txtBold}Last final commit:${txtReset} $final_commit_msg"
+        else
+            IO:print "🎯  ${txtBold}Last final commit:${txtReset} (initial commit)"
+        fi
+    else
+        # No intermediate commits found, show last commit
+        local last_commit
+        last_commit=$(git log --oneline -1 2>/dev/null | sed 's/^[a-f0-9]* //')
+        IO:print "🎯  ${txtBold}Last final commit:${txtReset} $last_commit"
+    fi
+    
+    # List all intermediate commits
+    local intermediate_commits
+    intermediate_commits=$(git log --oneline --grep="#intermediate")
+    
+    if [[ -n "$intermediate_commits" ]]; then
+        local count
+        count=$(echo "$intermediate_commits" | wc -l | xargs)
+        IO:print "🔄  ${txtBold}Intermediate commits ($count):${txtReset}"
+        echo "$intermediate_commits" | while read -r commit; do
+            local msg
+            msg=$(echo "$commit" | sed 's/^[a-f0-9]* //')
+            IO:print "   • $msg"
+        done
+    else
+        IO:print "🔄  ${txtBold}Intermediate commits:${txtReset} none"
+    fi
+    
+    # Show changed files since last intermediate commit
+    local last_intermediate
+    last_intermediate=$(git log --oneline --grep="#intermediate" -1 | awk '{print $1}')
+    
+    if [[ -n "$last_intermediate" ]]; then
+        # Show both committed changes since last intermediate AND uncommitted changes
+        local committed_files uncommitted_files untracked_files all_changed_files
+        committed_files=$(git diff --name-only "$last_intermediate..HEAD")
+        uncommitted_files=$(git diff --name-only)
+        untracked_files=$(git status --porcelain | grep "^??" | cut -c4-)
+        
+        # Combine and deduplicate the files
+        all_changed_files=$(echo -e "$committed_files\n$uncommitted_files\n$untracked_files" | sort -u | grep -v '^$')
+        
+        if [[ -n "$all_changed_files" ]]; then
+            local file_count
+            file_count=$(echo "$all_changed_files" | wc -l | xargs)
+            IO:print "📝  ${txtBold}Changed files since last intermediate ($file_count):${txtReset}"
+            echo "$all_changed_files" | while read -r file; do
+                local status
+                status=$(git status --porcelain "$file" | cut -c1-2)
+                case "$status" in
+                    " M"|"M "|"MM") IO:print "   ${txtBold}M${txtReset} $file" ;;
+                    " A"|"A "|"AM") IO:print "   ${txtInfo}A${txtReset} $file" ;;
+                    " D"|"D "|"DM") IO:print "   ${txtError}D${txtReset} $file" ;;
+                    "??") IO:alert "? $file" ;;
+                    *) IO:print "   • $file" ;;
+                esac
+            done
+        else
+            IO:print "📝  ${txtBold}Changed files since last intermediate:${txtReset} none"
+        fi
+    else
+        # No intermediate commits, show uncommitted changes and untracked files
+        local uncommitted_files untracked_files all_changed_files
+        uncommitted_files=$(git diff --name-only)
+        untracked_files=$(git status --porcelain | grep "^??" | cut -c4-)
+        
+        # Combine and deduplicate the files
+        all_changed_files=$(echo -e "$uncommitted_files\n$untracked_files" | sort -u | grep -v '^$')
+        
+        if [[ -n "$all_changed_files" ]]; then
+            local file_count
+            file_count=$(echo "$all_changed_files" | wc -l | xargs)
+            IO:print "📝  ${txtBold}Changed files since last commit ($file_count):${txtReset}"
+            echo "$all_changed_files" | while read -r file; do
+                local status
+                status=$(git status --porcelain "$file" | cut -c1-2)
+                echo "[$status]"
+                case "$status" in
+                    " M"|"M "|"MM") IO:print "   ${txtBold}M${txtReset} $file" ;;
+                    " A"|"A "|"AM") IO:print "   ${txtInfo}A${txtReset} $file" ;;
+                    " D"|"D "|"DM") IO:print "   ${txtError}D${txtReset} $file" ;;
+                    "??") IO:alert "? $file" ;;
+                    *) IO:print "   • $file" ;;
+                esac
+            done
+        else
+            IO:print "📝  ${txtBold}Changed files since last commit:${txtReset} none"
+        fi
+    fi
 }
 
 #####################################################################
