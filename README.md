@@ -8,7 +8,8 @@
 
 # clode
 
-Prep your projects for AI software development assistants
+Prep your projects for AI software development assistants.
+Implements the [git workflow for AI development assistants](https://github.com/pforret/claude_code_tips/blob/main/GIT.md).
 
 ## 🔥 Usage
 
