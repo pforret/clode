@@ -45,14 +45,13 @@ flag|V|VERBOSE|also show debug messages
 flag|f|FORCE|do not ask for confirmation (always yes)
 flag|A|AUTO_COMMIT|automatically generate commit messages with Claude Code CLI
 flag|D|DRY_RUN|show what would be done without executing
-flag|E|ERASE|clear command history after final commit
 flag|G|GENERATE|use Claude Code CLI to generate CLAUDE.md file
 flag|S|SQUASH|squash all intermediate commits before push
 option|C|COMMIT|commit type for intermediate commits|fix
 option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|M|MESSAGE|custom commit message|
 option|T|TMP_DIR|folder for temp files|.tmp
-choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,push,p,final,f,status,s,check,env,update
+choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,final,f,status,s,check,env,update
 param|?|input|input text
 " -v -e '^#' -e '^\s*$'
 }
@@ -92,14 +91,6 @@ function Script:main() {
     #TIP: use «$script_prefix rollback [target]» to rollback commits
     #TIP:> $script_prefix rollback last
     do_rollback_commit
-    ;;
-
-  push | p)
-    #TIP: use «$script_prefix push» to squash and push branch
-    #TIP:> $script_prefix push
-    #TIP: use «$script_prefix push -A» to auto-generate commit messages with Claude Code CLI
-    #TIP:> $script_prefix push --AUTO_COMMIT
-    do_push_branch
     ;;
 
   final | f)
@@ -355,14 +346,18 @@ function do_intermediate_commit() {
             local file_count
             file_count=$(echo "$changed_files" | wc -l)
             
-            # Get top 5 most changed files by lines changed
-            local top_files
-            top_files=$(git diff --stat --staged | sed '$d' | sort -k2 -nr | head -5 | awk '{print $1}' | paste -sd, -)
-            
-            if [[ -n "$top_files" ]]; then
-                commit_msg="update $file_count file(s): $top_files"
+            if [[ $file_count -eq 1 ]]; then
+                commit_msg="update $file_count $(git diff --stat --staged "$changed_files" | head -1)"
             else
-                commit_msg="update $file_count file(s)"
+                local top_files
+
+                top_files=$(git diff --stat --staged | sed '$d' | sort -k2 -nr | head -5 | awk '{print $1}' | paste -sd, -)
+                
+                if [[ -n "$top_files" ]]; then
+                    commit_msg="update $file_count file(s): $top_files"
+                else
+                    commit_msg="update $file_count file(s)"
+                fi
             fi
         else
             commit_msg="checkpoint update"
@@ -451,7 +446,7 @@ function do_push_branch() {
     
     current_branch=$(git branch --show-current)
     if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
-        IO:die "Cannot push from main/master branch"
+        IO:die "Cannot squash/push from main/master branch"
     fi
     
     # Count intermediate commits
@@ -509,14 +504,26 @@ $(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-
         return 0
     fi
     
-    # Check if remote branch exists
+    # Check if remote branch exists and push
     if git ls-remote --heads origin "$current_branch" | grep -q "$current_branch"; then
-        git push --force-with-lease origin "$current_branch"
+        if ((DRY_RUN)); then
+            IO:print "Would run: git push --force-with-lease origin $current_branch"
+        else
+            git push --force-with-lease origin "$current_branch"
+        fi
     else
-        git push -u origin "$current_branch"
+        if ((DRY_RUN)); then
+            IO:print "Would run: git push -u origin $current_branch"
+        else
+            git push -u origin "$current_branch"
+        fi
     fi
     
-    IO:success "Pushed branch: $current_branch"
+    if ((DRY_RUN)); then
+        IO:print "Would have pushed branch: $current_branch"
+    else
+        IO:success "Pushed branch: $current_branch"
+    fi
     
     # Provide next steps
     IO:print ""
@@ -538,16 +545,12 @@ function gen_commit_with_claude() {
     
     # Get the diff of changes
     local diff_output
-    diff_output=$(git diff "$before_base..HEAD" --stat)
+    diff_output=$(git diff "$before_base..HEAD")
     
     # Get list of changed files
     local changed_files
     changed_files=$(git diff --name-only "$before_base..HEAD")
-    
-    # Get commit messages from intermediate commits
-    local commit_messages
-    commit_messages=$(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-9]* //')
-    
+
     # Create a prompt for Claude to generate commit message
     local claude_prompt="Based on the following git changes, generate a concise commit message (max 3 lines total):
 
@@ -557,43 +560,37 @@ $changed_files
 DIFF STATS:
 $diff_output
 
-INTERMEDIATE COMMIT MESSAGES:
-$commit_messages
-
 Requirements:
 - First line: conventional commit format (feat:, fix:, docs:, refactor:, etc.)
 - Maximum 3 lines total
 - Summarize the overall purpose and impact
 - Focus on WHAT was accomplished, not HOW"
     
+    #shellcheck disable=SC2154
+    if ((DRY_RUN)); then
+        IO:print "Would generate commit message with Claude Code CLI using:"
+        IO:print "---------"
+        IO:print "$claude_prompt"
+        IO:print "---------"
+        return 0
+    fi
+    
     # Generate commit message with Claude
     local generated_msg
     generated_msg=$(echo "$claude_prompt" | claude 2>/dev/null)
     
     if [[ -n "$generated_msg" ]]; then
-        echo "$generated_msg"
+        IO:print "$generated_msg"
     else
         IO:debug "Claude generation failed, using default message"
-        echo "$default_message"
+        IO:print "$default_message"
     fi
 }
 
 function do_final_commit() {
     SQUASH=1
     do_push_branch
-    
-    # After successful final commit, check if user wants to clear history
-    #shellcheck disable=SC2154
-    if ((ERASE)) || { ! ((ERASE)) && IO:confirm "Clear command history for fresh start?"; }; then
-        IO:announce "Clearing command history..."
-        if ((DRY_RUN)); then
-            IO:print "Would execute: /clear command"
-        else
-            # Execute the clear command
-            clear
-            IO:success "Command history cleared - ready for new feature development"
-        fi
-    fi
+    IO:print "It might be a good idea to execute /clear in your Claude Code window"
 }
 
 
