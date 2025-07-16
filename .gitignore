@@ -1,7 +1,7 @@
 *.tmp
 .env
-.tmp
 /.claude/
 /.idea
+/.tmp
 /log
 /vendor
