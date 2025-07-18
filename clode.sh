@@ -393,7 +393,8 @@ function do_rollback_commit() {
             local last_commit
             last_commit=$(git log -1 --pretty=format:"%h %s")
             if IO:confirm "Rollback last commit: $last_commit?"; then
-                git reset --hard HEAD~1
+                git reset --hard HEAD~1 # restore existing files/deleted files
+                git clean -f # delete new files
                 IO:success "Rolled back last commit"
                 
                 # Update step counter if it was an intermediate commit
