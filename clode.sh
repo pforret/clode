@@ -289,6 +289,7 @@ function do_create_branch() {
                 if [[ "$actual_branch" == "$branch_name" ]]; then
                     IO:success "Created and switched to branch: $branch_name"
                     
+                    [[ ! -d .claude ]] && mkdir .claude
                     # Store branch info for later use
                     echo "$branch_name" > .claude/current_branch
                     echo "0" > .claude/step_counter
