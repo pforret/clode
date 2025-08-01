@@ -51,7 +51,7 @@ option|C|COMMIT|commit type for intermediate commits|fix
 option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|M|MESSAGE|custom commit message|
 option|T|TMP_DIR|folder for temp files|.tmp
-choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,final,f,status,s,check,env,update
+choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,final,f,status,s,spatie,check,env,update
 param|?|input|input text
 " -v -e '^#' -e '^\s*$'
 }
@@ -109,6 +109,12 @@ function Script:main() {
     do_show_status
     ;;
 
+  spatie)
+    #TIP: use «$script_prefix spatie» to install Spatie's Laravel Claude Code recommendations
+    #TIP:> $script_prefix spatie
+    do_install_spatie
+    ;;
+
   check | env)
     ## leave this default action, it will make it easier to test your script
     #TIP: use «$script_prefix check» to check if this script is ready to execute and what values the options/flags are
@@ -140,10 +146,10 @@ function Script:main() {
 
 function do_prep_project() {
     IO:log "Preparing project for AI development"
-    
+
     # Create necessary directories
     [[ ! -d ".claude" ]] && mkdir -p ".claude" && IO:success "Created .claude/ directory"
-    
+
     # Create CLAUDE.md if it doesn't exist
     if [[ ! -f "CLAUDE.md" ]]; then
         #shellcheck disable=SC2154
@@ -156,7 +162,7 @@ function do_prep_project() {
                 GENERATE=0  # Fall back to template approach
             fi
         fi
-        
+
         # Use template or fallback if generation wasn't requested or failed
         if ! ((GENERATE)) || [[ ! -f "CLAUDE.md" ]]; then
             local template_path="$script_install_folder/templates/CLAUDE.md"
@@ -175,7 +181,7 @@ function do_prep_project() {
             fi
         fi
     fi
-    
+
     # Create planning.md if it doesn't exist
     if [[ ! -f "planning.md" ]]; then
         local template_path="$script_install_folder/templates/planning.md"
@@ -194,7 +200,7 @@ function do_prep_project() {
             IO:success "Created basic planning.md"
         fi
     fi
-    
+
     # Initialize git if not already initialized
     if [[ ! -d ".git" ]]; then
         # Try to initialize with main branch (newer git versions)
@@ -207,13 +213,13 @@ function do_prep_project() {
             IO:success "Initialized git repository with main branch"
         fi
     fi
-    
+
     IO:success "Project prepared for AI development"
 }
 
 function do_create_branch() {
     local branch_name="${input:-}"
-    
+
     # Validate we're in a git repo
     if [[ ! -d ".git" ]]; then
         IO:die "Not in a git repository. Run 'clode prep' first."
@@ -226,12 +232,12 @@ function do_create_branch() {
         branch_name="feature/ai-task-$timestamp"
         IO:announce "Generated branch name: $branch_name"
     fi
-    
+
     # Show current branch for debugging
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
     IO:debug "Current branch: $current_branch"
-    
+
     # Check for uncommitted changes
     if [[ -n "$(git status --porcelain)" ]]; then
         if IO:confirm "You have uncommitted changes. Commit them first?"; then
@@ -247,7 +253,7 @@ function do_create_branch() {
             IO:die "Please commit or stash your changes first"
         fi
     fi
-    
+
     # Check if branch already exists
     if git show-ref --verify --quiet "refs/heads/$branch_name"; then
         IO:alert "Branch '$branch_name' already exists"
@@ -288,7 +294,7 @@ function do_create_branch() {
                 actual_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
                 if [[ "$actual_branch" == "$branch_name" ]]; then
                     IO:success "Created and switched to branch: $branch_name"
-                    
+
                     [[ ! -d .claude ]] && mkdir .claude
                     # Store branch info for later use
                     echo "$branch_name" > .claude/current_branch
@@ -312,13 +318,13 @@ function do_intermediate_commit() {
     if [[ ! -d ".git" ]]; then
         IO:die "Not in a git repository"
     fi
-    
+
     local current_branch
     current_branch=$(git branch --show-current)
     if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
         IO:die "Cannot create intermediate commits on main/master branch"
     fi
-    
+
     # Get or initialize step counter
     local step_num=1
     if [[ -f "$step_file" ]]; then
@@ -328,16 +334,16 @@ function do_intermediate_commit() {
         # Ensure .claude directory exists
         mkdir -p .claude
     fi
-    
+
     # Check for changes
     if [[ -z "$(git status --porcelain)" ]]; then
         IO:alert "No changes to commit"
         return 0
     fi
-    
+
     # Stage all changes first
     git add -A
-    
+
     # Generate commit message if not provided
     if [[ -z "$commit_msg" ]]; then
         # Auto-generate based on staged files
@@ -346,14 +352,14 @@ function do_intermediate_commit() {
         if [[ -n "$changed_files" ]]; then
             local file_count
             file_count=$(echo "$changed_files" | wc -l)
-            
+
             if [[ $file_count -eq 1 ]]; then
                 commit_msg="update $file_count $(git diff --stat --staged "$changed_files" | head -1)"
             else
                 local top_files
 
                 top_files=$(git diff --stat --staged | sed '$d' | sort -k2 -nr | head -5 | awk '{print $1}' | paste -sd, -)
-                
+
                 if [[ -n "$top_files" ]]; then
                     commit_msg="update $file_count file(s): $top_files"
                 else
@@ -372,21 +378,21 @@ function do_intermediate_commit() {
         IO:print "Would commit: $full_commit_msg"
         return 0
     fi
-    
+
     git commit -m "$full_commit_msg"
     echo "$step_num" > "$step_file"
-    
+
     IO:success "Created intermediate commit #$(printf "%02d" $step_num): $commit_msg"
 }
 
 function do_rollback_commit() {
     local target="${input:-last}"
-    
+
     # Validate we're in a git repo
     if [[ ! -d ".git" ]]; then
         IO:die "Not in a git repository"
     fi
-    
+
     case "$target" in
         "last")
             # Rollback last commit
@@ -396,7 +402,7 @@ function do_rollback_commit() {
                 git reset --hard HEAD~1 # restore existing files/deleted files
                 git clean -f # delete new files
                 IO:success "Rolled back last commit"
-                
+
                 # Update step counter if it was an intermediate commit
                 if [[ "$last_commit" == *"#intermediate"* ]]; then
                     local step_file=".claude/step_counter"
@@ -445,10 +451,20 @@ function do_push_branch() {
     if [[ ! -d ".git" ]]; then
         IO:die "Not in a git repository"
     fi
-    
+
     current_branch=$(git branch --show-current)
     if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
         IO:die "Cannot squash/push from main/master branch"
+    fi
+
+    # Check for uncommitted changes
+    if ! git diff --quiet || ! git diff --cached --quiet || [[ -n $(git ls-files --others --exclude-standard) ]]; then
+        IO:print "Uncommitted changes detected"
+        if IO:confirm "Create one last intermediate commit with current changes?"; then
+            git add .
+            git commit -m "WIP: final changes #intermediate"
+            IO:print "Created final intermediate commit"
+        fi
     fi
     
     # Count intermediate commits
@@ -717,8 +733,6 @@ function do_show_status() {
     fi
 }
 
-<<<<<<< Updated upstream
-=======
 function do_install_spatie(){
   [[ ! -f CLAUDE.md ]] && IO:die "CLAUDE.md file not found. Please run 'clode prep' first."
   [[ ! -d .claude ]] && IO:die ".claude folder not found. Please run 'clode prep' first."
@@ -751,7 +765,6 @@ function do_install_spatie(){
   IO:success "Added reference to Spatie guidelines to CLAUDE.md"
 }
 
->>>>>>> Stashed changes
 #####################################################################
 ################### DO NOT MODIFY BELOW THIS LINE ###################
 #####################################################################
