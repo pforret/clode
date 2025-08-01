@@ -717,6 +717,41 @@ function do_show_status() {
     fi
 }
 
+<<<<<<< Updated upstream
+=======
+function do_install_spatie(){
+  [[ ! -f CLAUDE.md ]] && IO:die "CLAUDE.md file not found. Please run 'clode prep' first."
+  [[ ! -d .claude ]] && IO:die ".claude folder not found. Please run 'clode prep' first."
+  [[ ! -w . ]] && IO:die "Current directory is not writable"
+  [[ ! -w CLAUDE.md ]] && IO:die "CLAUDE.md is not writable"
+
+  # Check if Spatie guidelines are already included
+  if grep -q "laravel-php-guidelines.md" CLAUDE.md; then
+    IO:print "Spatie guidelines are already included in CLAUDE.md"
+    return 0
+  fi
+
+  local guidelines=".claude/laravel-php-guidelines.md"
+
+  # cf https://spatie.be/guidelines/aia
+  # Download our guidelines
+  if ! curl -s -f -o "$guidelines" https://spatie.be/laravel-php-ai-guidelines.md; then
+    IO:die "Failed to download Spatie guidelines"
+  fi
+  IO:success "Downloaded Spatie guidelines to $guidelines"
+
+  # Tell Claude to read the guidelines file
+  {
+    echo " "
+    echo " "
+    echo "## Spatie Coding Standards"
+    echo "When working on this Laravel/PHP project, first read the coding guidelines at @$guidelines"
+  } >> CLAUDE.md
+
+  IO:success "Added reference to Spatie guidelines to CLAUDE.md"
+}
+
+>>>>>>> Stashed changes
 #####################################################################
 ################### DO NOT MODIFY BELOW THIS LINE ###################
 #####################################################################
