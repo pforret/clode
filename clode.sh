@@ -215,12 +215,11 @@ function do_prep_project() {
   fi
 
   if IO:confirm "Install essential MCP servers?"; then
-    IO:announce "Installing Playwright..."
     claude mcp add playwright npx -- @playwright/mcp@latest
-    IO:announce "Installing Context7..."
     claude mcp add context7 -- npx -y @upstash/context7-mcp
-    IO:announce "Installing GitHub..."
     claude mcp add --transport http github https://api.githubcopilot.com/mcp/
+    IO:announce "Installed essential MCP servers:"
+    claude mcp list
   fi
 
   IO:success "Project prepared for AI development"
