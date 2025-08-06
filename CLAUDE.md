@@ -52,6 +52,10 @@ The script uses the bashew framework which provides:
 
 ## Development Notes
 
+### Style guide
+- follow https://google.github.io/styleguide/shellguide.html
+- keep in mind that some binaries like `date` and `sed` may not work the same on MacOS and Linux, so if you need them, put them in a function() that detects the OS and uses the right command/parameters
+
 ### Framework Features
 - Automatic OS detection and package manager integration
 - Unicode support detection

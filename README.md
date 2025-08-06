@@ -8,29 +8,56 @@
 
 # clode
 
-Prep your projects for AI software development assistants
+Prep your projects for AI software development and git.
+Implements the [git workflow for Claude Code](https://github.com/pforret/claude_code_tips/blob/main/GIT.md).
 
 ## 🔥 Usage
 
 ```
 Program : clode  by peter@forret.com
-Version : v0.0.1 (Apr 22 16:07:13 2023)
+Version : v0.2.0 (Jul 15 19:26:53 2025)
 Purpose : Prep your projects for AI software development assistants
-Usage   : clode [-h] [-q] [-v] [-f] [-l <log_dir>] [-t <tmp_dir>] <action>
+Usage   : clode [-h] [-Q] [-V] [-f] [-A] [-D] [-E] [-G] [-S] [-C <COMMIT>] [-L <LOG_DIR>] [-M <MESSAGE>] [-T <TMP_DIR>] <action> <input?>
 Flags, options and parameters:
     -h|--help        : [flag] show usage [default: off]
-    -q|--quiet       : [flag] no output [default: off]
-    -v|--verbose     : [flag] also show debug messages [default: off]
-    -f|--force       : [flag] do not ask for confirmation (always yes) [default: off]
-    -l|--log_dir <?> : [option] folder for log files   [default: /Users/pforret/log/script]
-    -t|--tmp_dir <?> : [option] folder for temp files  [default: /tmp/script]
-    <action>         : [choice] action to perform  [options: action1,action2,check,env,update]
-                                  
+    -Q|--QUIET       : [flag] no output [default: off]
+    -V|--VERBOSE     : [flag] also show debug messages [default: off]
+    -f|--FORCE       : [flag] do not ask for confirmation (always yes) [default: off]
+    -A|--AUTO_COMMIT : [flag] automatically generate commit messages with Claude Code CLI [default: off]
+    -D|--DRY_RUN     : [flag] show what would be done without executing [default: off]
+    -E|--ERASE       : [flag] clear command history after final commit [default: off]
+    -G|--GENERATE    : [flag] use Claude Code CLI to generate CLAUDE.md file [default: off]
+    -S|--SQUASH      : [flag] squash all intermediate commits before push [default: off]
+    -C|--COMMIT <?>  : [option] commit type for intermediate commits  [default: fix]
+    -L|--LOG_DIR <?> : [option] folder for log files   [default: /Users/pforret/log/clode]
+    -M|--MESSAGE <?> : [option] custom commit message
+    -T|--TMP_DIR <?> : [option] folder for temp files  [default: .tmp]
+    <action>         : [choice] action to perform  [options: prep,branch,b,inter,i,rollback,r,push,p,final,f,status,s,check,env,update]
+    <input>          : [parameter] input text (optional)
+                                                                                                 
 ### TIPS & EXAMPLES
-* use clode action1 to ...
-  clode action1
-* use clode action2 to ...
-  clode action2
+* use clode prep to prepare project for AI development
+  clode prep
+* use clode prep -G to generate CLAUDE.md with Claude Code CLI
+  clode prep --GENERATE
+* use clode branch [name] to create new feature branch
+  clode branch my-feature
+* use clode inter [-M "message"] to create intermediate commit
+  clode inter -M "implemented feature"
+* use clode rollback [target] to rollback commits
+  clode rollback last
+* use clode push to squash and push branch
+  clode push
+* use clode push -A to auto-generate commit messages with Claude Code CLI
+  clode push --AUTO_COMMIT
+* use clode final to squash all commits and push
+  clode final
+* use clode final -A to auto-generate commit messages with Claude Code CLI
+  clode final --AUTO_COMMIT
+* use clode final -E to automatically clear command history after final commit
+  clode final --ERASE
+* use clode status to show current git workflow status
+  clode status
 * use clode check to check if this script is ready to execute and what values the options/flags are
   clode check
 * use clode env to generate an example .env file
