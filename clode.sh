@@ -51,7 +51,7 @@ option|C|COMMIT|commit type for intermediate commits|fix
 option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|M|MESSAGE|custom commit message|
 option|T|TMP_DIR|folder for temp files|.tmp
-choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,final,f,status,s,spatie,check,env,update
+choice|1|action|action to perform|prep,branch,b,inter,i,rollback,r,final,f,merge,m,status,s,spatie,check,env,update
 param|?|input|input text
 " -v -e '^#' -e '^\s*$'
 }
@@ -94,13 +94,21 @@ function Script:main() {
     ;;
 
   final | f)
-    #TIP: use «$script_prefix final» to squash all commits and push
+    #TIP: use «$script_prefix final» to choose between pull request or merge-into-main workflow
     #TIP:> $script_prefix final
     #TIP: use «$script_prefix final -A» to auto-generate commit messages with Claude Code CLI
     #TIP:> $script_prefix final --AUTO_COMMIT
     #TIP: use «$script_prefix final -E» to automatically clear command history after final commit
     #TIP:> $script_prefix final --ERASE
     do_final_commit
+    ;;
+
+  merge | m)
+    #TIP: use «$script_prefix merge» to merge feature branch using Merge-into-main  workflow
+    #TIP:> $script_prefix merge
+    #TIP: use «$script_prefix merge -A» to auto-generate commit messages with Claude Code CLI
+    #TIP:> $script_prefix merge --AUTO_COMMIT
+    do_claude_assisted_merge
     ;;
 
   status | s)
@@ -453,7 +461,7 @@ function do_rollback_commit() {
   esac
 }
 
-function do_push_branch() {
+function do_pull_request() {
   local current_branch intermediate_commits base_commit before_base final_msg
   # Validate we're in a git repo and on feature branch
   if [[ ! -d ".git" ]]; then
@@ -559,40 +567,235 @@ $(git log --oneline "$before_base..HEAD" --grep="#intermediate" | sed 's/^[a-f0-
   IO:print "3. Delete feature branch after merge"
 }
 
-function gen_commit_with_claude() {
-  local before_base="$1"
-  local default_message="$2"
+function do_final_commit() {
+  # Validate we're in a git repo and on feature branch
+  if [[ ! -d ".git" ]]; then
+    IO:die "Not in a git repository"
+  fi
 
-  if ! command -v claude >/dev/null 2>&1; then
-    IO:debug "Claude CLI not available, using default message"
-    echo "$default_message"
+  local current_branch
+  current_branch=$(git branch --show-current)
+  if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
+    IO:die "Cannot finalize from main/master branch. Switch to feature branch first."
+  fi
+
+  # Ask user to choose the final workflow
+  IO:print ""
+  IO:print "${txtBold}Choose final workflow:${txtReset}"
+  IO:print "1. Squash & Push for Pull Request (with formal review & approval)"
+  IO:print "2. Merge into Main (local merge and update main branch)"
+  IO:print ""
+
+  local choice
+  choice=$(IO:question "Enter your choice (1 or 2)" "1")
+
+  case "$choice" in
+    "1")
+      IO:announce "Executing: Squash & Push ..."
+      SQUASH=1
+      do_pull_request
+      ;;
+    "2")
+      IO:announce "Executing: Merge into Main ..."
+      do_merge_into_main
+      ;;
+    *)
+      IO:die "Invalid choice. Please enter 1 or 2."
+      ;;
+  esac
+
+  IO:print "It might be a good idea to execute /clear in your Claude Code window"
+}
+
+function do_merge_into_main() {
+  # Validate we're in a git repo and on feature branch
+  if [[ ! -d ".git" ]]; then
+    IO:die "Not in a git repository"
+  fi
+
+  local current_branch
+  current_branch=$(git branch --show-current)
+  if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
+    IO:die "Cannot merge from main/master branch. Switch to feature branch first."
+  fi
+
+  # Ensure we're on a feature branch with changes
+  if ! git show-ref --verify --quiet "refs/heads/main" && ! git show-ref --verify --quiet "refs/heads/master"; then
+    IO:die "No main or master branch found"
+  fi
+
+  # Determine main branch name
+  local main_branch="main"
+  if git show-ref --verify --quiet "refs/heads/master" && ! git show-ref --verify --quiet "refs/heads/main"; then
+    main_branch="master"
+  fi
+
+  # Check if there are changes between current branch and main
+  if [[ -z "$(git diff "$main_branch...HEAD")" ]]; then
+    IO:alert "No changes detected between $current_branch and $main_branch"
     return 0
   fi
 
-  # Get the diff of changes
+  # Show what we're about to do
+  IO:announce "Claude Code Assisted Merge Into Main"
+  IO:print "Current branch: $current_branch"
+  IO:print "Target branch: $main_branch"
+
+  # Show changes that will be merged (following procedure_v2.md)
+  IO:print ""
+  IO:print "${txtBold}Changes to be merged:${txtReset}"
+  git diff --stat "$main_branch...HEAD"
+
+  if ((DRY_RUN)); then
+    IO:print ""
+    IO:print "${txtBold}Dry run - would execute:${txtReset}"
+    IO:print "git diff $main_branch...HEAD"
+    IO:print "git reset --soft $main_branch"
+    IO:print "git status"
+    IO:print "git diff --cached"
+    IO:print "[Claude Code analyzes and commits]"
+    return 0
+  fi
+
+  # Ask for confirmation
+  if ! IO:confirm "Proceed with Claude Code assisted merge?"; then
+    IO:alert "Merge cancelled"
+    return 0
+  fi
+
+  # Step 1: Analyze the diff (as per procedure_v2.md)
+  IO:announce "Analyzing changes between $main_branch and $current_branch..."
   local diff_output
-  diff_output=$(git diff "$before_base..HEAD")
+  diff_output=$(git diff "$main_branch...HEAD")
 
-  # Get list of changed files
-  local changed_files
-  changed_files=$(git diff --name-only "$before_base..HEAD")
+  if [[ -z "$diff_output" ]]; then
+    IO:alert "No diff found - merge not needed"
+    return 0
+  fi
 
-  # Create a prompt for Claude to generate commit message
-  local claude_prompt="Based on the following git changes, generate a concise commit message (max 3 lines total):
+  # Step 2: Reset to main while keeping changes staged (key step from procedure_v2.md)
+  # This stays on feature branch but resets commit history to main and stages all changes
+  IO:announce "Staging all changes from feature branch (resetting to $main_branch commit history)..."
+  if ! git reset --soft "$main_branch"; then
+    IO:die "Failed to reset to $main_branch. Please check your git status."
+  fi
 
-CHANGED FILES:
-$changed_files
+  # Verify we're still on feature branch (this is correct behavior)
+  local current_after_reset
+  current_after_reset=$(git branch --show-current)
+  if [[ "$current_after_reset" != "$current_branch" ]]; then
+    IO:die "Reset failed - expected to stay on $current_branch, but on $current_after_reset"
+  fi
 
-DIFF STATS:
-$diff_output
+  # Verify we have staged changes
+  if [[ -z "$(git diff --cached --name-only)" ]]; then
+    IO:die "Reset failed - no staged changes found after reset"
+  fi
 
-Requirements:
-- First line: conventional commit format (feat:, fix:, docs:, refactor:, etc.)
-- Maximum 3 lines total
-- Summarize the overall purpose and impact
-- Focus on WHAT was accomplished, not HOW"
+  # Step 3: Show status (as per procedure_v2.md)
+  IO:print ""
+  IO:print "${txtBold}Current status after reset:${txtReset}"
+  git status --short
 
-  #shellcheck disable=SC2154
+  # Step 4: Generate commit message with Claude Code
+  local final_commit_msg
+  if ((AUTO_COMMIT)) || { ! ((AUTO_COMMIT)) && IO:confirm "Generate commit message with Claude Code CLI?"; }; then
+    IO:announce "Generating commit message with Claude Code CLI..."
+    final_commit_msg=$(gen_commit_with_claude_v2 "$main_branch" "$current_branch")
+    if [[ -n "$final_commit_msg" ]]; then
+      final_commit_msg="$final_commit_msg
+
+🤖 Generated with Claude Code - pforret/clode"
+    else
+      # Fallback to manual message
+      IO:alert "Claude Code generation failed, please provide commit message manually"
+      final_commit_msg=$(IO:question "Enter commit message" "feat: merge feature branch $current_branch")
+    fi
+  else
+    # Manual commit message
+    final_commit_msg=$(IO:question "Enter commit message" "feat: merge feature branch $current_branch")
+  fi
+
+  # Step 5: Create the final commit on feature branch
+  IO:announce "Creating final commit..."
+  if git commit -m "$final_commit_msg"; then
+    local final_commit_hash
+    final_commit_hash=$(git rev-parse HEAD)
+
+    # Show the commit that was created
+    IO:print ""
+    IO:print "${txtBold}Final commit created:${txtReset}"
+    git log -1 --oneline
+
+    # Step 6: Switch to main and update it to point to our new commit
+    IO:announce "Updating $main_branch branch to include the merge..."
+    if git checkout "$main_branch"; then
+      # Fast-forward main to our new commit
+      if git reset --hard "$final_commit_hash"; then
+        IO:success "Successfully merged $current_branch into $main_branch using Claude Code assisted workflow"
+
+        # Clean up feature branch
+        if IO:confirm "Delete feature branch $current_branch?"; then
+          git branch -d "$current_branch" 2>/dev/null || git branch -D "$current_branch"
+          IO:success "Deleted feature branch: $current_branch"
+        fi
+      else
+        IO:die "Failed to update $main_branch branch to new commit"
+      fi
+    else
+      IO:die "Failed to switch to $main_branch branch"
+    fi
+
+  else
+    IO:die "Failed to create commit. Changes are staged - you can commit manually."
+  fi
+
+  # Show next steps
+  IO:print ""
+  IO:print "${txtBold}Next steps:${txtReset}"
+  IO:print "1. Review the merge: git show HEAD"
+  IO:print "2. Push to remote: git push"
+  IO:print "3. Your feature has been merged as a single clean commit on $main_branch"
+}
+
+function gen_commit_with_claude_v2() {
+  local main_branch="$1"
+  local feature_branch="$2"
+
+  if ! command -v claude >/dev/null 2>&1; then
+    IO:debug "Claude CLI not available"
+    return 1
+  fi
+
+  # Get the staged changes (different from original gen_commit_with_claude)
+  local staged_diff staged_files
+  staged_diff=$(git diff --cached)
+  staged_files=$(git diff --cached --name-only)
+
+  # Create enhanced prompt for Claude based on procedure v2 requirements
+  local claude_prompt
+  claude_prompt="You are helping create a commit message for a git merge using the Merge-into-main workflow.
+
+CONTEXT:
+- Feature branch '$feature_branch' is being merged into '$main_branch'
+- All changes have been staged using 'git reset --soft $main_branch'
+- This represents the complete work from the feature branch
+
+STAGED FILES:
+$staged_files
+
+STAGED CHANGES SUMMARY:
+$(git diff --cached --stat)
+
+REQUIREMENTS:
+- Create a single-line commit message using conventional commits format
+- Focus on the overall feature/change being merged, not individual commits
+- Use appropriate prefix: feat:, fix:, docs:, refactor:, etc.
+- Maximum 72 characters for the first line
+- Briefly describe the main accomplishment or feature added
+
+Generate ONLY the commit message, no explanations:"
+
   if ((DRY_RUN)); then
     IO:print "Would generate commit message with Claude Code CLI using:"
     IO:print "---------"
@@ -603,20 +806,14 @@ Requirements:
 
   # Generate commit message with Claude
   local generated_msg
-  generated_msg=$(echo "$claude_prompt" | claude 2>/dev/null)
-
-  if [[ -n "$generated_msg" ]]; then
-    IO:print "$generated_msg"
+  if generated_msg=$(echo "$claude_prompt" | claude 2>/dev/null); then
+    # Clean up the message (remove quotes, extra whitespace)
+    generated_msg=$(echo "$generated_msg" | sed 's/^["'"'"']//' | sed 's/["'"'"']$//' | head -1)
+    echo "$generated_msg"
   else
-    IO:debug "Claude generation failed, using default message"
-    IO:print "$default_message"
+    IO:debug "Claude generation failed"
+    return 1
   fi
-}
-
-function do_final_commit() {
-  SQUASH=1
-  do_push_branch
-  IO:print "It might be a good idea to execute /clear in your Claude Code window"
 }
 
 function do_show_status() {
