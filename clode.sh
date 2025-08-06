@@ -773,7 +773,8 @@ function gen_commit_with_claude_v2() {
   staged_files=$(git diff --cached --name-only)
 
   # Create enhanced prompt for Claude based on procedure v2 requirements
-  local claude_prompt="You are helping create a commit message for a git merge using the Merge-into-main workflow.
+  local claude_prompt
+  claude_prompt="You are helping create a commit message for a git merge using the Merge-into-main workflow.
 
 CONTEXT:
 - Feature branch '$feature_branch' is being merged into '$main_branch'
