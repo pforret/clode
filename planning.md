@@ -12,7 +12,7 @@ It asks questions to gather information about the project, such as its architect
 
 ## Git Checkpoints
 
-This implements the git workflow described in https://raw.githubusercontent.com/pforret/claude_code_tips/refs/heads/main/GIT.md
+This implements the git workflow described in @docs/procedure_v1.md
 
 ### `clode branch` |`clode b`
 
@@ -37,6 +37,6 @@ An example of an intermediate commit message might be:
 
 rolls back the last intermediate commit, a specific earlier commit (`clode r --commit 123abc`, or the start of the branch (`clode r --branch`, allowing developers to revert to a previous state if needed. 
 
-### `clode push`|`clode p`
+### `clode final`|`clode f`
 
 squashes all intermediate commits into a single commit and pushes the branch to the remote repository. This is typically done when the feature or task is complete and ready for review or merging into the main branch.

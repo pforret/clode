@@ -1,11 +1,21 @@
 # Project Planning
 
-## Current Task
-[Describe what you're working on]
+## Short-term tasks (days)
 
-## Goals
-- [ ] Goal 1
-- [ ] Goal 2
+* [ ] finalize @CLAUDE.md document
+
+## Mid-term tasks (weeks)
+
+* [ ] Implement core features
+
+## Long-term tasks (months)
+
+* [ ] Optimize performance and scalability
 
 ## Notes
 [Development notes and decisions]
+
+
+## Finished tasks (archive)
+
+* [x] Initial project setup
